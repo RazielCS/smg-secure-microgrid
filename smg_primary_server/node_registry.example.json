@@ -1,0 +1,9 @@
+{
+  "_comment": "Template only. Real entries are generated per-node by tools/provision_node.py during Root of Trust provisioning (see smg_control_node/README.md) and must never be committed to version control: node_key and node_salt are the node's private authentication secrets (Stage 2.2.1 P_auth parameters). Copy this file to node_registry.json on the primary agent and let provisioning populate it, or paste generated entries in by hand.",
+  "534d475f4e4f44455f30310000000000": {
+    "label": "SMG_NODE_01",
+    "node_key": "REPLACE_WITH_PROVISIONED_KEY_HEX",
+    "node_salt": "REPLACE_WITH_PROVISIONED_SALT_HEX",
+    "node_uuid": "REPLACE_WITH_PROVISIONED_UUID_HEX"
+  }
+}

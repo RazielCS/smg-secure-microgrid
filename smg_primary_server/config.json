@@ -1,0 +1,9 @@
+{
+  "server_ip": "0.0.0.0",
+  "server_port": 5000,
+  "server_id": "",
+  "server_key": "",
+  "_comment_keys": "Run server.py once to auto-generate server_id and server_key, then paste them here",
+  "ems_update_interval_s": 5.0,
+  "ems_default_demand_w": 50.0
+}

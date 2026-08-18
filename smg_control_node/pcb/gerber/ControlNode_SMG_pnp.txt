@@ -1,0 +1,43 @@
+*Pick And Place List
+*Company=
+*Author=
+*eMail=
+*
+*Project=ControlNode_SMG
+*Date=15:16:04
+*CreatedBy=Fritzing 0.9.3b.04.19.5c895d32
+*
+*
+*Coordinates in mm, always center of component
+*Origin 0/0=Lower left corner of PCB
+*Rotation in degree (0-360, math. pos.)
+*
+*No;Value;Package;X;Y;Rotation;Side;Name
+1;;to-92;82.4536;-48.5146;180;Bottom;U1
+2;;;26.4254;-19.1707;90;Bottom;M1
+3;220;THT;59.5936;-9.05572;90;Bottom;220_3
+4;;;43.4023;-50.1131;90;Bottom;Gen voltage
+5;220;THT;82.4536;-39.5357;90;Bottom;RB1K_2
+6;;;26.5736;-50.3307;90;Bottom;Bus current
+7;;;87.5336;-16.0407;-90;Bottom;Self current
+8;;THT;112.807;-58.3317;-90;Bottom;12vin
+9;220;THT;54.5136;-11.5957;-90;Bottom;220_2
+10;;;59.3511;-50.1131;90;Bottom;Bus voltage
+11;;;8.79361;-50.3307;90;Bottom;Gen current
+12;220;THT;74.8336;-9.05572;0;Bottom;10K
+13;;to-92;92.6136;-48.5146;180;Bottom;U2
+14;220;THT;79.9136;-39.5357;90;Bottom;PD10K_2
+15;220;THT;92.6136;-39.5357;90;Bottom;RB1k
+16;;to-92;72.2936;-48.5146;180;Bottom;U3
+17;220;THT;90.0736;-39.5357;90;Bottom;PD10K_1
+18;220;THT;72.2936;-39.5357;90;Bottom;RB1K_3
+19;;[THT];74.1236;-19.5058;-90;Bottom;S1
+20;;THT;100.107;-58.3317;-90;Bottom;SSR1
+21;;THT;74.7066;-58.3317;-90;Bottom;SSR3
+22;220;THT;69.7536;-39.5357;90;Bottom;PD10K_3
+23;;3 mm [THT];64.6735;-13.4845;180;Bottom;LED2
+24;;3 mm [THT];64.6735;-5.86449;180;Bottom;LED3
+25;;THT;87.4066;-58.3317;-90;Bottom;SSR2
+26;;;107.777;-24.5374;90;Bottom;M2
+27;;3 mm [THT];64.6735;-21.0647;180;Bottom;LED1
+28;220;THT;57.0536;-16.6757;-90;Bottom;220_1

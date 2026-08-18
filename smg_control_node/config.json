@@ -1,0 +1,31 @@
+{
+  "node_role": "secondary",
+  "bench_mode": true,
+  "wifi_ssid": "REPLACE_WITH_NVS",
+  "wifi_pass": "REPLACE_WITH_NVS",
+  "server_ip": "10.42.0.1",
+  "server_port": 5000,
+  "read_interval_s": 0.333,
+  "send_interval_s": 1.0,
+  "bench_send_max": 400,
+  "calibration": {
+    "acs712_bus":  { "vref": 2.5, "sensitivity": 0.185, "offset": 0.0 },
+    "acs712_gen":  { "vref": 2.5, "sensitivity": 0.185, "offset": 0.0 },
+    "acs712_node": { "vref": 2.5, "sensitivity": 0.185, "offset": 0.0 },
+    "vdiv_bus":  { "ratio": 5.0, "offset": 0.0 },
+    "vdiv_gen":  { "ratio": 5.0, "offset": 0.0 }
+  },
+  "ems": {
+    "v_bus_nominal": 12.0,
+    "p_demand_default": 50.0,
+    "pwm_min": 0,
+    "pwm_max": 1023,
+    "pwm_freq": 1000
+  },
+  "thresholds": {
+    "v_bus_min": 10.0,
+    "v_bus_max": 14.0,
+    "i_bus_max": 5.0,
+    "p_gen_max": 100.0
+  }
+}

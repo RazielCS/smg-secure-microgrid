@@ -1,0 +1,11 @@
+# Provisioned secrets — never commit real node credentials
+smg_primary_server/node_registry.json
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor/OS
+.DS_Store
+Thumbs.db

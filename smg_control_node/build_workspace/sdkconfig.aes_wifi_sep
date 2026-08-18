@@ -1,0 +1,26 @@
+# Custom sdkconfig fragment for AES/WiFi separation
+# Disable hardware GCM acceleration to reduce AES DMA hold time
+# This keeps hardware AES block encryption but performs GHASH in software
+# and encrypts one block at a time, leaving room for WiFi DMA between blocks.
+
+# Keep hardware AES enabled for block encryption performance
+CONFIG_MBEDTLS_HARDWARE_AES=y
+
+# Disable hardware GCM - use software GHASH + block-by-block hardware AES
+CONFIG_MBEDTLS_HARDWARE_GCM=n
+
+# Ensure WiFi task is pinned to core 0
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+
+# Ensure MicroPython task runs on core 1 (default via MP_TASK_COREID in mphalport.h)
+
+# lwIP TCP buffer tuning — increase send/recv buffers to prevent TX starvation
+# when crypto modules compete with WiFi driver for system heap.
+# Default is 5744; raising to 8760 (6 * MSS) gives the WiFi stack more headroom.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=8760
+CONFIG_LWIP_TCP_WND_DEFAULT=8760
+CONFIG_LWIP_TCP_MSS=1460
+
+# Increase lwIP socket buffer pool to handle concurrent crypto + WiFi allocations
+CONFIG_LWIP_MAX_SOCKETS=10
+CONFIG_LWIP_TCP_SEG_MAX_TCB=16

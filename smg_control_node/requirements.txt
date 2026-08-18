@@ -1,0 +1,20 @@
+# SMG Control Node — Host Tool Requirements
+# Python >= 3.10 required
+# Tested: Python 3.11.x on Windows 11 and Ubuntu 22.04
+#
+# Install: pip install -r requirements.txt
+
+# --- Firmware flashing ---
+esptool==4.7.0
+
+# --- File upload and REPL access ---
+mpremote==1.22.0
+
+# --- Serial port (dependency of esptool and mpremote) ---
+pyserial==3.5
+
+# --- Node provisioning (tools/provision_node.py) ---
+cryptography==41.0.7
+
+# --- Automated test suite (tests/) ---
+pytest==7.4.4

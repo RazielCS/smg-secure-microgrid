@@ -36,8 +36,11 @@ PCB design deployed for the paper's bench trials. It intentionally does **not** 
 - Provisioned node secrets (`node_registry.json`) — see `smg_primary_server/node_registry.example.json`
   and the Root of Trust provisioning steps in `smg_primary_server/README.md`; these are generated
   fresh per deployment and must never be committed.
-- Raw measurement data, logs, or the derived figures/tables reported in the paper. The paper's
-  measurement CSVs and analysis are maintained alongside the manuscript, not in this code repository.
+- Raw measurement data, logs, or the derived figures/tables reported in the paper. These are
+  published in the companion artifact repository:
+  <https://github.com/RazielCS/smg-secure-microgrid-paper-artifacts> — manuscript source, raw
+  bench-trial measurements (CSVs, serial logs, packet captures), the frozen firmware snapshot
+  used on the bench, expert-validation instruments, and the errata log.
 - Development-only diagnostic/debug scripts used to bring up WiFi, NVS provisioning, and the RPi
   access point during firmware bring-up; only the scripts needed to provision a node
   (`tools/provision_node.py`), run the dual-node bench trial (`tools/dual_bench_test.py`), and the

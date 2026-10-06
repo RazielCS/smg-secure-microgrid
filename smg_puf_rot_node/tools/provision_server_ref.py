@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""
+Provisioning tool -- writes the pinned server reference (ID_B, ShS_B_ref) into an
+NVS partition image for the PUF-based ROT firmware (smg_puf_rot_node), matching
+rot_identity.c's expectations:
+
+    namespace "rot_identity"
+        key "id_b"       blob, ROT_ID_LEN (16) bytes
+        key "shs_b_ref"  blob, ROT_DIGEST_LEN (32) bytes
+
+This is the device-side half of the server pinning step described in the paper's
+"Root of Trust Establishment" section (Table rotpsim, Phase 1: "pin (store): {ID_B,
+ShS_B} as server reference"). ShS_B is a conventional secret known to the server and
+to this pinned copy -- NOT a PUF-derived value (the server is not a PUF device; see
+rot_identity.h). Values are generated once, written to a flashable NVS partition
+image AND to a JSON file the RPi4 server counterpart reads, so both sides agree.
+
+Why this approach (over a serial-console command at first boot): the ESP-IDF
+toolchain already ships `nvs_partition_gen.py`, a supported, tested tool for building
+NVS partition images from a CSV description entirely on the host, with no firmware
+changes and no interactive device session required. It produces a binary that can
+be flashed independently of the application partition
+(`esptool.py write_flash 0x9000 <out.bin>`, per partitions_puf.csv's NVS offset),
+which is the standard ESP-IDF provisioning pattern for per-device secrets. This
+script only *generates* that image; flashing it is a separate, explicit step left
+to the operator (see printed instructions) since it requires a connected device.
+
+Usage:
+    python provision_server_ref.py
+    python provision_server_ref.py --id-b <32-hex-chars> --shs-b <64-hex-chars>
+    python provision_server_ref.py --idf-python "C:\\Espressif\\tools\\python\\v5.4.2\\venv\\Scripts\\python.exe"
+
+Outputs (default paths, override with --out-bin / --server-identity):
+    server_ref_nvs.bin                                    (flashable NVS image)
+    ../../smg_primary_server/puf_server_identity.json      (server-side counterpart)
+"""
+import argparse
+import csv
+import json
+import os
+import secrets
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROT_ID_LEN = 16
+ROT_DIGEST_LEN = 32
+NVS_PARTITION_OFFSET = "0x9000"   # from partitions_puf.csv
+NVS_PARTITION_SIZE = 0x50000       # from partitions_puf.csv
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(HERE)  # smg_puf_rot_node/
+IMPLEMENTATION_ROOT = os.path.dirname(PROJECT_ROOT)  # Implementation/
+DEFAULT_SERVER_IDENTITY_PATH = os.path.join(
+    IMPLEMENTATION_ROOT, "smg_primary_server", "puf_server_identity.json")
+
+# Candidate locations for the ESP-IDF Python venv (the plain "python" on PATH does
+# not have the esp_idf_nvs_partition_gen package installed -- see task report).
+_IDF_PYTHON_CANDIDATES = [
+    r"C:\Espressif\tools\python\v5.4.2\venv\Scripts\python.exe",
+    r"C:\Espressif\tools\python\v6.0.1\venv\Scripts\python.exe",
+]
+
+
+def find_nvs_partition_gen():
+    """Locate nvs_partition_gen.py under a local ESP-IDF install (IDF_PATH env var,
+    or the known C:\\esp\\vX.Y.Z\\esp-idf install layout used on this machine)."""
+    candidates = []
+    idf_path = os.environ.get("IDF_PATH")
+    if idf_path:
+        candidates.append(idf_path)
+    esp_root = r"C:\esp"
+    if os.path.isdir(esp_root):
+        for entry in os.listdir(esp_root):
+            candidates.append(os.path.join(esp_root, entry, "esp-idf"))
+    for c in candidates:
+        p = os.path.join(c, "components", "nvs_flash", "nvs_partition_generator",
+                          "nvs_partition_gen.py")
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def find_idf_python(explicit=None):
+    if explicit:
+        return explicit
+    for c in _IDF_PYTHON_CANDIDATES:
+        if os.path.isfile(c):
+            return c
+    return sys.executable  # last resort; will likely fail with a clear error
+
+
+def write_nvs_csv(csv_path, id_b_hex, shs_b_hex):
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["key", "type", "encoding", "value"])
+        w.writerow(["rot_identity", "namespace", "", ""])
+        w.writerow(["id_b", "data", "hex2bin", id_b_hex])
+        w.writerow(["shs_b_ref", "data", "hex2bin", shs_b_hex])
+
+
+def generate_nvs_image(nvs_gen_script, idf_python, csv_path, out_bin, size):
+    result = subprocess.run(
+        [idf_python, nvs_gen_script, "generate", csv_path, out_bin, str(size)],
+        capture_output=True, text=True,
+    )
+    return result
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--id-b", help="16-byte server ID as 32 hex chars (default: random)")
+    ap.add_argument("--shs-b", help="32-byte server reference secret as 64 hex chars (default: random)")
+    ap.add_argument("--out-bin", default=os.path.join(PROJECT_ROOT, "server_ref_nvs.bin"),
+                     help="Output flashable NVS partition image")
+    ap.add_argument("--server-identity", default=DEFAULT_SERVER_IDENTITY_PATH,
+                     help="Output JSON consumed by the RPi4 server counterpart")
+    ap.add_argument("--idf-python", default=None,
+                     help="Path to the ESP-IDF venv python (auto-detected if omitted)")
+    ap.add_argument("--keep-csv", action="store_true",
+                     help="Keep the intermediate NVS CSV file for inspection")
+    args = ap.parse_args()
+
+    id_b_hex = args.id_b or secrets.token_hex(ROT_ID_LEN)
+    shs_b_hex = args.shs_b or secrets.token_hex(ROT_DIGEST_LEN)
+
+    if len(id_b_hex) != ROT_ID_LEN * 2:
+        ap.error(f"--id-b must be {ROT_ID_LEN * 2} hex chars ({ROT_ID_LEN} bytes)")
+    if len(shs_b_hex) != ROT_DIGEST_LEN * 2:
+        ap.error(f"--shs-b must be {ROT_DIGEST_LEN * 2} hex chars ({ROT_DIGEST_LEN} bytes)")
+
+    nvs_gen_script = find_nvs_partition_gen()
+    if nvs_gen_script is None:
+        print("ERROR: could not find nvs_partition_gen.py under any local ESP-IDF install "
+              "(checked $IDF_PATH and C:\\esp\\*\\esp-idf). Install ESP-IDF or pass "
+              "IDF_PATH explicitly.", file=sys.stderr)
+        sys.exit(1)
+    idf_python = find_idf_python(args.idf_python)
+
+    tmpdir = tempfile.mkdtemp(prefix="puf_provision_")
+    csv_path = os.path.join(tmpdir, "server_ref.csv")
+    write_nvs_csv(csv_path, id_b_hex, shs_b_hex)
+
+    result = generate_nvs_image(nvs_gen_script, idf_python, csv_path, args.out_bin,
+                                 NVS_PARTITION_SIZE)
+    if result.returncode != 0:
+        print("ERROR: nvs_partition_gen.py failed:", file=sys.stderr)
+        print(result.stdout, file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        sys.exit(1)
+
+    os.makedirs(os.path.dirname(args.server_identity), exist_ok=True)
+    with open(args.server_identity, "w") as f:
+        json.dump({"id_b": id_b_hex, "shs_b": shs_b_hex}, f, indent=2)
+        f.write("\n")
+
+    if args.keep_csv:
+        kept = os.path.join(PROJECT_ROOT, "server_ref.csv")
+        shutil.copy(csv_path, kept)
+        print(f"NVS CSV kept at: {kept}")
+
+    print("Generated NVS partition image:", args.out_bin,
+          f"({os.path.getsize(args.out_bin)} bytes)")
+    print("Wrote server identity for RPi4 counterpart:", args.server_identity)
+    print()
+    print("id_b     =", id_b_hex)
+    print("shs_b_ref=", shs_b_hex)
+    print()
+    print("NOT executed (requires a connected ESP32 -- run manually once hardware is")
+    print("available, after erasing/flashing the rest of the firmware as usual):")
+    print(f"    esptool.py --chip esp32 --port COMx write_flash {NVS_PARTITION_OFFSET} {args.out_bin}")
+
+
+if __name__ == "__main__":
+    main()

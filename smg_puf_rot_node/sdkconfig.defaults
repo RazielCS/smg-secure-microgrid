@@ -1,0 +1,9 @@
+# Custom partition table (enlarged NVS for PUF helper data -- see partitions_puf.csv)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_puf.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_puf.csv"
+
+# mbedtls: hardware-accelerated AES and SHA on ESP32
+CONFIG_MBEDTLS_HARDWARE_AES=y
+CONFIG_MBEDTLS_HARDWARE_SHA=y
+CONFIG_MBEDTLS_HARDWARE_GCM=y

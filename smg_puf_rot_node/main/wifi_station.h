@@ -1,8 +1,7 @@
 // Minimal WiFi station connect (standard ESP-IDF esp_wifi boilerplate).
-// TODO(paper OWASP I1 argument / provisioning gap, see rot_identity.h): SSID/password are
-// compile-time placeholders (wifi_station.c) mirroring the MicroPython firmware's *old*
-// insecure default -- that firmware later moved WiFi credentials into NVS specifically to
-// avoid this. Not yet replicated here; flagged in the task report.
+// TODO: SSID/password are compile-time constants in wifi_station.c, not provisioned via
+// NVS. Moving them into NVS alongside the other enrollment data is a candidate ITER~2
+// hardening item (see the paper's Limitations).
 #pragma once
 
 #include <stdbool.h>

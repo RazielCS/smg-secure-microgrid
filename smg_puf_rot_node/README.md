@@ -1,20 +1,22 @@
 # smg_puf_rot_node
 
-Pure C / ESP-IDF firmware for the SMG's PUF-based Root of Trust redesign (no MicroPython,
-no BLAKE3). Implements identity, Root of Trust, and secure-communication only — sensor
-reading and fuzzy EMS control are **not** ported here (see the paper's Limitations); for
-those, see `smg_control_node/` (the prior PSK+NVS/MicroPython instantiation).
+Pure C / ESP-IDF firmware for the SMG's PUF-based Root of Trust. Implements identity, Root of
+Trust, and secure-communication only — sensor reading and fuzzy EMS control are **not** ported
+here (see the paper's Limitations).
 
-Protocol summary (see the paper, "Root of Trust Establishment" and the Methodology section
+Protocol summary (see the paper, "Root of Trust Establishment" and "STRIDE-to-Protocol Mapping"
 for the full description):
 
 - **P1 — Enrollment:** `esp32_puflib`'s `enroll_puf()` reads the ESP32's RTC FAST SRAM
   power-up state across repeated measurements and derives a non-secret stable-bit mask and
-  ECC helper data, stored in NVS. These never disclose the PUF response without physical
-  access to the specific chip.
-- **P2 — Root of Trust (session identification):** a 4-message nonce-bound hash-reconstruction
-  challenge (`rot_session.c`). Neither party ever transmits its verifier or the underlying
-  PUF response; `Key_ab = SHA-256(ShS_A || ShS_B || challenge_A || challenge_B)`.
+  ECC helper data, stored in NVS. The device derives an elliptic-curve (P-256) key pair from
+  its PUF response (HKDF, RFC 5869, with rejection sampling) and registers its public key
+  `pk_a` with the server once; the private key `sk_a` is never transmitted or stored.
+- **P2 — Root of Trust (session identification):** a 4-message nonce-bound mutual
+  authentication (`rot_session.c`). Asymmetric on the device side (ECDSA signature over a
+  server-issued nonce, verified against `pk_a`) and symmetric on the server side (a per-node
+  verifier `V_B`, proven via a nonce-bound hash). `Key_ab = SHA-256(V_B || challenge_A ||
+  challenge_B)`. Neither `sk_a` nor `V_B` is ever transmitted.
 - **P3 — Secure channel:** AES-256-GCM (`secure_channel.c`, via `mbedtls`) under `Key_ab`.
 
 Server-side counterpart: `smg_primary_server/rot_challenge_service.py` + `puf_server.py`.
@@ -40,43 +42,44 @@ idf.py -p <PORT> flash monitor
 ```
 
 `sdkconfig.defaults` enables the enlarged NVS partition (`partitions_puf.csv`, 0x50000 bytes
-for the PUF helper data + server reference) and hardware-accelerated AES/SHA/GCM.
+for the PUF helper data + server reference), HKDF, and hardware-accelerated AES/SHA/ECDSA.
 
 **Before building**, set a real WiFi passphrase in `main/wifi_station.c`
-(`WIFI_PASS "CHANGE_ME_WIFI_PASSWORD"`) — the real bench password is not published, for the
-same reason the prior PSK+NVS firmware's default AP password was redacted (see
-`ERRATA.md`, item m1).
+(`WIFI_PASS "CHANGE_ME_WIFI_PASSWORD"`) — the real bench password is not published (see
+Materials Availability in the paper).
 
 ## Provisioning a node
 
 1. First boot after flashing: the device enrolls (`enroll_puf()`), then — since no server
    reference is pinned yet — prints a one-time **provisioning export** block over USB serial:
-   `id_a` and `shs_a_ref` in hex, plus a ready-to-run `register_puf_node.py` command.
-2. On the server host, generate the server's own identity once:
-   `smg_primary_server/tools/` does not include a server-identity generator in this
-   repository; see `smg_primary_server/README.md`/`rot_challenge_service.py` docstring for
-   the expected `puf_server_identity.json` shape (`{"id_b": "<32 hex chars>", "shs_b": "<64
-   hex chars>"}`) and generate your own (e.g. `os.urandom(16).hex()` / `os.urandom(32).hex()`).
+   `id_a` and the device's public key `pk_a` in hex, plus a ready-to-run `register_puf_node.py`
+   command.
+2. On the server host, establish the server's own identity once (fleet-wide, non-secret
+   `id_b`): `python tools/provision_server_ref.py` (run with no `--id-b` argument to generate
+   and persist a fresh one into `smg_primary_server/puf_server_identity.json`).
 3. Register the node from the printed export: `python register_puf_node.py --id-a <id_a>
-   --shs-a-ref <shs_a_ref> --label <node-label>` (writes to `puf_node_registry.json`).
-4. Pin the server reference on the device: `tools/provision_server_ref.py` builds an NVS
-   partition image (`nvs_partition_gen.py` from the ESP-IDF toolchain) containing `id_b`/
-   `shs_b_ref`, flashed at the NVS partition offset. **This flash wipes the whole NVS
-   partition, including the PUF enrollment** — the device will re-enroll (and derive a
-   *different* `shs_a_ref`) on its next boot, so step 1–3 must be repeated with the new
-   value if this happens after enrollment.
+   --pk-a <pk_a> --label <node-label>` (writes to `puf_node_registry.json`, and generates a
+   fresh per-node server verifier `V_B` for this node).
+4. Pin the server reference on the device: `tools/provision_server_ref.py --id-b <id_b>
+   --shs-b <V_B> --out-bin <label>_server_ref_nvs.bin` builds an NVS partition image
+   (`nvs_partition_gen.py` from the ESP-IDF toolchain), flashed at the NVS partition offset.
+   **This flash wipes the whole NVS partition, including the PUF enrollment** — the device
+   will re-enroll (and derive a *different* `pk_a`) on its next boot, so step 1–3 must be
+   repeated with the new value if this happens after enrollment. Generate and flash the
+   node's `V_B` image before the device re-enrolls, then capture and register its final
+   `pk_a` afterward — not the other way around.
 5. Subsequent boots: enrollment + server reference both present in NVS → the device
    connects to WiFi, connects to the server, reconstructs its PUF response, and runs the
    P2/P3 handshake automatically.
 
 ## Reproducing the bench trial (Table "PUF-based RoT real-hardware bench trial" in the paper)
 
-The raw bench data (30 hard-reset trials, both the superseded 2026-10-02 round and the
-round reported in the paper, 2026-10-06) is published in the companion artifact repository:
+The raw bench data (30 hard-reset trials against SMG_NODE_01) is published in the companion
+artifact repository:
 `case_study_SMG/Implementation/smg_puf_rot_node/bench_results_20261005/` at
 https://github.com/RazielCS/smg-secure-microgrid-paper-artifacts — including the per-run
 raw serial logs, the parsed `summary.csv`, the bench script itself (`run_bench.py`), and the
-server-side log (`server_log_20261005.txt`) captured during the run.
+server-side log captured during the run.
 
 To reproduce against your own hardware:
 

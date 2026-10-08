@@ -10,12 +10,9 @@
 
 static const char *TAG = "wifi_station";
 
-// Compile-time credentials -- see TODO in wifi_station.h. SSID matches the SMG bench
-// setup's primary-agent AP (RPi4, "SMG_Primary", 10.42.0.0/24 NetworkManager hotspot)
-// referenced in the paper's Root of Trust validation section. WIFI_PASS below is a
-// placeholder: the real bench password is not published here (see ERRATA.md m1 precedent
-// for the same redaction on the prior PSK+NVS firmware) -- set it to your own AP's
-// passphrase before building.
+// Placeholder credentials -- see TODO in wifi_station.h. Matches the SMG bench setup's
+// primary-agent AP (RPi4, "SMG_Primary", 192.168.4.0/24) referenced in the paper's case
+// study ("Digital architecture" / Table hardware).
 #define WIFI_SSID "SMG_Primary"
 #define WIFI_PASS "CHANGE_ME_WIFI_PASSWORD"
 #define WIFI_MAX_RETRY 10

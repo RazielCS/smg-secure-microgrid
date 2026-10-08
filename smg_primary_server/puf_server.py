@@ -1,19 +1,14 @@
 """
 SMG Primary Server -- PUF challenge-response protocol runner.
 
-Standalone entry point for the new 3-phase protocol (rot_challenge_service.py),
-kept separate from server.py (which still runs the retired SecureNode v3
-P2-P5 protocol against auth_service.py -- left untouched since the paper's
-CSQ3 bench-trial data historically describes that protocol). Once the C/
-ESP-IDF firmware (smg_puf_rot_node) is validated end-to-end on real hardware,
-this can replace server.py as the primary entry point.
+Entry point for the Root of Trust protocol (rot_challenge_service.py): PUF-seeded
+asymmetric device authentication and per-node symmetric server authentication.
 
 Prerequisites:
     1. Run smg_puf_rot_node/tools/provision_server_ref.py once to create
-       puf_server_identity.json (id_b/shs_b shared with the device's NVS image).
+       puf_server_identity.json (id_b).
     2. Register each enrolled device with tools/register_puf_node.py once its
-       real shs_a_ref has been captured from hardware (see task report --
-       this step requires a connected ESP32 and is not automated here).
+       pk_a has been captured from hardware (requires a connected ESP32).
 
 Usage:
     python puf_server.py [--host 0.0.0.0] [--port 5001]

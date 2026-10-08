@@ -1,8 +1,6 @@
-// SMG PUF-based Root of Trust node -- pure C/ESP-IDF (no MicroPython), identity/RoT/
-// communication layer only (see task scope note below and the paper's "Root of Trust
-// Establishment" section). Sensor reading and fuzzy EMS control (ems_module.py,
-// sensor_module.py in the MicroPython firmware) are NOT ported here -- out of scope for
-// this pass; see final task report for what remains to reach parity with smg_control_node/.
+// SMG PUF-based Root of Trust node -- identity/RoT/communication layer only (see the
+// paper's "Root of Trust Establishment" section). Sensor reading and fuzzy EMS control
+// are not implemented in this firmware; see the paper's Limitations.
 
 #include <string.h>
 #include <sys/socket.h>
@@ -93,14 +91,15 @@ void app_main(void) {
         // No server reference is pinned yet, so this boot cannot proceed to the network
         // handshake anyway. This is exactly the point at which the device is known-good
         // (enrollment just completed) and still physically attached over USB serial to a
-        // controlled workstation -- the same trust model the prior MicroPython firmware used
-        // to provision node_key over USB serial (tools/provision_node.py), just applied to a
-        // PUF-derived value instead of a randomly-generated one. ID_A and ShS_A are printed
-        // here, once, for an operator to copy into the server registry via
-        // smg_primary_server/tools/register_puf_node.py. Neither value is ever sent over the
-        // network by this firmware, and after this branch returns, the PUF response and ShS_A
-        // are released from RAM like any other boot -- there is no serial export path in
-        // normal operation (i.e. once a server reference IS pinned, this branch never runs).
+        // controlled workstation. ID_A and the device's PUBLIC key pk_A are printed here,
+        // once, for an operator to copy into the server registry via
+        // smg_primary_server/tools/register_puf_node.py. pk_A being public, printing and
+        // transmitting it discloses nothing an attacker could use to forge a signature --
+        // unlike the private key sk_A, which is derived fresh each boot, never leaves
+        // rot_session_handshake()'s stack, and is never printed, stored, or transmitted.
+        // After this branch returns, the PUF response is released from RAM like any other
+        // boot -- there is no serial export path in normal operation (i.e. once a server
+        // reference IS pinned, this branch never runs).
         uint8_t id_a[ROT_ID_LEN];
         rot_identity_get_id_a(id_a);
 
@@ -112,22 +111,28 @@ void app_main(void) {
                            "TODOs)");
             return;
         }
-        uint8_t shs_a[ROT_DIGEST_LEN];
-        rot_identity_derive_shs_a(puf_response, puf_len, shs_a);
+        mbedtls_mpi sk_a;
+        uint8_t pk_a[ROT_PUBKEY_LEN];
+        bool keypair_ok = rot_identity_derive_keypair(puf_response, puf_len, &sk_a, pk_a);
         rot_identity_release_puf_response();
+        if (!keypair_ok) {
+            ESP_LOGE(TAG, "failed to derive device identity keypair for provisioning export");
+            return;
+        }
+        mbedtls_mpi_free(&sk_a);  // sk_a is never exported; only pk_a (public) is printed below
 
-        char id_a_hex[ROT_ID_LEN * 2 + 1], shs_a_hex[ROT_DIGEST_LEN * 2 + 1];
+        char id_a_hex[ROT_ID_LEN * 2 + 1], pk_a_hex[ROT_PUBKEY_LEN * 2 + 1];
         bin_to_hex(id_a, ROT_ID_LEN, id_a_hex);
-        bin_to_hex(shs_a, ROT_DIGEST_LEN, shs_a_hex);
+        bin_to_hex(pk_a, ROT_PUBKEY_LEN, pk_a_hex);
 
         ESP_LOGW(TAG, "no pinned server reference in NVS -- provisioning step missing, "
                        "cannot proceed to handshake (see rot_identity.h TODOs)");
         printf("\n=== PROVISIONING EXPORT (one-time, trusted physical channel) ===\n");
         printf("id_a=%s\n", id_a_hex);
-        printf("shs_a_ref=%s\n", shs_a_hex);
+        printf("pk_a=%s\n", pk_a_hex);
         printf("Run on the RPi4 / server host:\n");
-        printf("  python register_puf_node.py --id-a %s --shs-a-ref %s --label SMG_NODE_01\n",
-               id_a_hex, shs_a_hex);
+        printf("  python register_puf_node.py --id-a %s --pk-a %s --label SMG_NODE_01\n",
+               id_a_hex, pk_a_hex);
         printf("=== END PROVISIONING EXPORT ===\n\n");
         return;
     }
@@ -153,7 +158,7 @@ void app_main(void) {
 
     rot_session_t session;
     bool ok = rot_session_handshake(sock, puf_response, puf_len, &session);
-    rot_identity_release_puf_response();  // ShS_A already derived; raw PUF_A no longer needed
+    rot_identity_release_puf_response();  // keypair already derived; raw PUF_A no longer needed
 
     if (!ok) {
         ESP_LOGE(TAG, "Root of Trust handshake FAILED");

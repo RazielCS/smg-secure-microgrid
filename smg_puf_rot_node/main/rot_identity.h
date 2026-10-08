@@ -5,15 +5,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "mbedtls/bignum.h"
 
 #define ROT_ID_LEN     16   // ID_A / ID_B length in bytes
-#define ROT_DIGEST_LEN 32   // SHA-256 digest length (ShS_*, proofs)
+#define ROT_DIGEST_LEN 32   // SHA-256 digest length (V_B, server_proof, session key)
+#define ROT_PUBKEY_LEN 65   // uncompressed SECP256R1 point: 0x04 || X(32) || Y(32)
 
 // ---- Device identity (ID_A) ----
 // TODO(paper Limitations / provisioning gap): ID_A is currently a compile-time placeholder.
-// A real deployment needs a per-device provisioning step writing a unique ID_A to NVS
-// (mirroring the MicroPython firmware's node_id), analogous to how ShS_B/ID_B below are
-// meant to be pinned once via a trusted provisioning channel. Not implemented in this pass.
+// A real deployment needs a per-device provisioning step writing a unique ID_A to NVS,
+// analogous to how V_B/ID_B below are meant to be pinned once via a trusted provisioning
+// channel. Not implemented in this pass.
 void rot_identity_get_id_a(uint8_t id_a[ROT_ID_LEN]);
 
 // ---- PUF-based device identity key material (Phase 1/2) ----
@@ -41,22 +43,27 @@ bool rot_identity_is_enrolled(void);
 bool rot_identity_get_puf_response(uint8_t **out_response, size_t *out_len);
 void rot_identity_release_puf_response(void);
 
-// ShS_A = HKDF(PUF_A) in the paper's notation; here implemented as SHA-256(PUF_A) for
-// simplicity (single-application KDF, no separate salt input required by the corrected
-// challenge-response design -- see rot_session.h). Held only in RAM by the caller.
-void rot_identity_derive_shs_a(const uint8_t *puf_response, size_t puf_len,
-                                uint8_t shs_a[ROT_DIGEST_LEN]);
+// Derives this boot's device identity keypair (sk_A, pk_A) on SECP256R1 deterministically
+// from the reconstructed PUF response, via HKDF-SHA256 expansion (RFC 5869) followed by
+// rejection sampling to a uniform scalar in [1, n-1] (n = curve order). sk_A is returned as
+// an initialized mbedtls_mpi that the caller must mbedtls_mpi_free() when done; it is used
+// only locally to produce an ECDSA signature (rot_session.c) and is never serialized,
+// transmitted, or stored -- it exists only transiently in RAM, exactly like the PUF
+// response it is derived from (Section "Root of Trust Establishment"). pk_A is the
+// corresponding 65-byte uncompressed public point (0x04 || X || Y); being public, it is
+// safe to print, export over serial, and register with the server. This keypair is what
+// the device proves possession of during P2 (asymmetric device authentication); server
+// compromise discloses only pk_A, which is insufficient to forge a signature.
+bool rot_identity_derive_keypair(const uint8_t *puf_response, size_t puf_len,
+                                  mbedtls_mpi *out_sk_a, uint8_t out_pk_a[ROT_PUBKEY_LEN]);
 
 // ---- Server reference, pinned once at provisioning (Table rotpsim Phase 1: "pin (store):
-// {ID_B, ShS_B} as server reference"). The server is NOT PUF-based (see paper Root of Trust
-// Establishment): ShS_B is a conventional value known only to the server and to this pinned
-// copy, not physically reconstructed. Stored in this project's own "rot_identity" NVS
-// namespace (kept separate from esp32_puflib's "storage" namespace).
-//
-// TODO(provisioning gap, same as ID_A above): no host-side provisioning tool exists yet for
-// this C firmware (the MicroPython tools/provision_node.py does not apply here). Until one is
-// written, rot_identity_save_server_ref() must be called from a temporary bring-up path (e.g.
-// a one-off debug build) with values coordinated out-of-band with whoever updates the RPi4
-// server counterpart -- flagged in the task report as a pending integration item.
+// {ID_B, V_B} as server reference"). The server is NOT PUF-based (see paper Root of Trust
+// Establishment): V_B is a conventional, per-node value known only to the server's record
+// for this specific node and to this pinned copy -- a distinct V_B is provisioned for each
+// enrolled node (never shared fleet-wide), so recovering one node's V_B lets an attacker
+// impersonate the server only to that single node, not to the fleet. Stored in this
+// project's own "rot_identity" NVS namespace (kept separate from esp32_puflib's "storage"
+// namespace).
 bool rot_identity_load_server_ref(uint8_t id_b[ROT_ID_LEN], uint8_t shs_b_ref[ROT_DIGEST_LEN]);
 bool rot_identity_save_server_ref(const uint8_t id_b[ROT_ID_LEN], const uint8_t shs_b_ref[ROT_DIGEST_LEN]);

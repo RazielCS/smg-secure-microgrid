@@ -7,3 +7,6 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions_puf.csv"
 CONFIG_MBEDTLS_HARDWARE_AES=y
 CONFIG_MBEDTLS_HARDWARE_SHA=y
 CONFIG_MBEDTLS_HARDWARE_GCM=y
+
+# HKDF: deterministic EC keypair derivation from the PUF response (rot_identity.c)
+CONFIG_MBEDTLS_HKDF_C=y

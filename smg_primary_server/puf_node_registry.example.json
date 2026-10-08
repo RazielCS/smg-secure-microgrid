@@ -1,7 +1,8 @@
 {
-  "README_FIRST": "Sanitized template. Each key is a node id_a (32 hex chars = 16 bytes), value is {label, shs_a_ref}. shs_a_ref (64 hex chars = 32 bytes) comes ONLY from the real device at enrollment time (its one-time provisioning-export serial printout) -- it cannot be generated on a host. Register a real node with tools/register_puf_node.py. Real captured values never committed -- see ERRATA.md m1 / Materials Availability.",
+  "README_FIRST": "Sanitized template. Each key is a node id_a (32 hex chars = 16 bytes), value is {label, pk_a, shs_b}. pk_a (130 hex chars = 65-byte uncompressed P-256 point) comes from the real device's one-time provisioning-export serial printout -- it cannot be generated on a host. shs_b (64 hex chars = 32 bytes) is this node's own per-node server verifier, generated fresh by tools/register_puf_node.py at registration time -- never reused across nodes. Register a real node with tools/register_puf_node.py. Real captured values never committed -- see ERRATA.md / Materials Availability.",
   "00000000000000000000000000000000": {
     "label": "EXAMPLE_NODE_01",
-    "shs_a_ref": "0000000000000000000000000000000000000000000000000000000000000000"
+    "pk_a": "0400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "shs_b": "0000000000000000000000000000000000000000000000000000000000000000"
   }
 }

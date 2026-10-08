@@ -1,20 +1,22 @@
 # SMG Primary Server
 
-TCP server implementing the SecureNode v3 responder role for the DC Smart Microgrid case study. Runs on a Raspberry Pi (or any Linux host) configured as a WiFi access point.
+Server implementing the Root of Trust challenge-response protocol for the DC Smart Microgrid case
+study. Runs on a Raspberry Pi (or any Linux host) configured as a WiFi access point.
 
 ## Architecture
 
 ```
 smg_primary_server/
-├── server.py           # Main TCP server (multi-threaded)
-├── auth_service.py     # Per-session SecureNode P2–P5 responder
-├── data_store.py       # Thread-safe sensor reading buffer
-├── ems_coordinator.py  # Global demand setpoint computation
-├── crypto_utils.py     # CPython-compatible HKDF + AES-256-GCM
-├── protocol.py         # Message framing (matches secure_node.py)
-├── config.json         # Server configuration
-├── node_registry.json  # Registered secondary nodes
-└── requirements.txt    # Python dependencies
+├── puf_server.py                  # Entry point: PUF challenge-response TCP server
+├── rot_challenge_service.py       # Per-session protocol handler (P1-P3)
+├── ems_coordinator.py             # Global demand setpoint computation
+├── data_store.py                  # Thread-safe sensor reading buffer
+├── config.json                    # Server configuration
+├── puf_server_identity.json       # Server identity (id_b) -- git-ignored
+├── puf_node_registry.json         # Registered nodes (pk_a, shs_b per node) -- git-ignored
+├── tools/
+│   └── register_puf_node.py       # Register a node's public key and generate its V_B
+└── requirements.txt                # Python dependencies
 ```
 
 ## Requirements
@@ -25,96 +27,71 @@ smg_primary_server/
 
 ## Setup
 
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure WiFi Access Point
+### 2. Configure WiFi access point
 
-On Raspberry Pi (or similar):
+On Raspberry Pi (or similar), using NetworkManager's hotspot mode or hostapd/dnsmasq:
 ```bash
-# Install hostapd and dnsmasq
-sudo apt install hostapd dnsmasq
-
-# /etc/hostapd/hostapd.conf:
+# /etc/hostapd/hostapd.conf (or equivalent NetworkManager hotspot config):
 interface=wlan0
-ssid=SMG_Primary_AP
+ssid=SMG_Primary
 hw_mode=g
-channel=6
+channel=1
 wpa=2
 wpa_passphrase=CHANGE_ME_WIFI_PASSWORD
 wpa_key_mgmt=WPA-PSK
-
-# /etc/dnsmasq.conf:
-interface=wlan0
-dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
 ```
 
-### 3. Generate Server Identity
+### 3. Establish the server identity
 
-Run the server once without credentials to auto-generate:
+Run once to generate `puf_server_identity.json` (the fleet-wide, non-secret `id_b`):
 ```bash
-python server.py
-# Output:
-# WARNING: No server_id/server_key in config — generating ephemeral identity.
-# WARNING: Add to config.json: server_id=<hex>  server_key=<hex>
+python ../smg_puf_rot_node/tools/provision_server_ref.py
 ```
 
-Copy the printed values into `config.json`.
+### 4. Enroll and register each node
 
-### 4. Provision Secondary Nodes
-
-For each secondary node, run the provisioning script (from smg_control_node/tools/):
+Flash and enroll the node's firmware (see `smg_puf_rot_node/README.md`). The device prints its
+`id_a` and public key `pk_a` once, over USB serial, during its one-time provisioning export. Then:
 ```bash
-python provision_node.py \
-    --port COM3 \
-    --node-id SMG_NODE_01 \
-    --role secondary \
-    --server-id <SERVER_ID_HEX> \
-    --wifi-ssid SMG_Primary_AP \
-    --wifi-pass CHANGE_ME_WIFI_PASSWORD
-
-# Copy the printed node_id, node_key, node_salt into node_registry.json
+python tools/register_puf_node.py --id-a <ID_A_HEX> --pk-a <PK_A_HEX> --label SMG_NODE_01
 ```
+This generates a fresh per-node server verifier (`shs_b` / $V_B$) and adds the node to
+`puf_node_registry.json` (copy `puf_node_registry.example.json` to start one if it doesn't exist
+yet; both registry and identity files are git-ignored and must never be committed). The command
+also prints the follow-up `provision_server_ref.py` invocation needed to pin that node's `shs_b`
+into its own NVS image before first boot.
 
-### 5. Populate Node Registry
-
-Copy `node_registry.example.json` to `node_registry.json` (git-ignored — it holds per-node private authentication secrets and must never be committed) and edit it:
-```json
-{
-  "<node_id_hex_from_provisioning>": {
-    "label": "SMG_NODE_01",
-    "node_key": "<node_key_hex>",
-    "node_salt": "<node_salt_hex>",
-    "node_uuid": "<node_uuid_hex>"
-  }
-}
-```
-
-### 6. Start the Server
+### 5. Start the server
 
 ```bash
-python server.py --config config.json --registry node_registry.json
+python puf_server.py --port 5001
 ```
 
-## Protocol Notes
+## Protocol notes
 
-The server implements the **responder** role of SecureNode v3:
+The server implements the Root of Trust challenge-response protocol (phases P1-P3): P1 enrollment
+is out-of-band (steps 3-4 above); P2 is a nonce-bound mutual-authentication handshake, asymmetric
+(ECDSA) on the device side and symmetric (per-node verifier $V_B$) on the server side; P3 is
+AES-256-GCM encrypted data exchange. See the paper's Root of Trust Establishment and
+STRIDE-to-Protocol Mapping sections for the full message sequence and design rationale. This
+protocol is an implementation-specific Stage 4 component of the SMG case study, not itself a
+contribution of the IoT methodology.
 
-| Phase | Role    | Messages |
-|-------|---------|----------|
-| P2    | Respond | rot_hello → rot_ack (HKDF key derivation) |
-| P3    | Respond | ses_init → ses_reply → ses_conf → ses_conf_ack |
-| P4    | Receive | dx_msg → dx_res [+ setpoint] (hash-chain + AES-GCM) |
-| P5    | Respond | logout_req → logout_res |
+`ems_coordinator.py` and `data_store.py` provide global EMS coordination and sensor-data buffering
+for node types that implement the sensor/EMS layer; the current `smg_puf_rot_node` firmware does
+not yet implement that layer (identity/Root-of-Trust/secure-communication only), so these modules
+are not currently exercised end-to-end — see the paper's Limitations.
 
-The SecureNode v3 protocol is submitted for separate peer review at IEEE IoT Journal. This server is an implementation-specific component of the SMG case study, not a contribution of the IoT methodology itself.
+## Security notes
 
-## Security Notes
-
-- WiFi password stored in `hostapd.conf` is a known trade-off for the case study. In production, use WPA3 or 802.1X.
-- `node_registry.json` contains pre-shared keys — protect it with filesystem permissions (`chmod 600 node_registry.json`).
-- The server's `server_key` in `config.json` must be kept secret. Do not commit it to version control.
-- All data exchange (P4) uses AES-256-GCM with per-message random nonces and a hash chain for integrity.
+- WiFi password is a known trade-off for a laboratory case study; use WPA3 or 802.1X in production.
+- `puf_node_registry.json` and `puf_server_identity.json` are git-ignored and must never be
+  committed; protect them with filesystem permissions (`chmod 600`).
+- Only public material (`id_a`, `pk_a`, `id_b`) is ever printed or transmitted for a device; its
+  private key is derived fresh from the PUF response every boot and never leaves the device.

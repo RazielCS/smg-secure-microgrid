@@ -1,9 +1,12 @@
 #include <string.h>
 #include "esp_log.h"
 #include "esp_attr.h"
+#include "esp_random.h"
 #include "nvs_flash.h"
 #include "nvs.h"
-#include "mbedtls/sha256.h"
+#include "mbedtls/hkdf.h"
+#include "mbedtls/ecp.h"
+#include "mbedtls/md.h"
 
 #include "puflib.h"
 #include "rot_identity.h"
@@ -123,9 +126,73 @@ void rot_identity_release_puf_response(void) {
     clean_puf_response();
 }
 
-void rot_identity_derive_shs_a(const uint8_t *puf_response, size_t puf_len,
-                                uint8_t shs_a[ROT_DIGEST_LEN]) {
-    mbedtls_sha256(puf_response, puf_len, shs_a, 0 /* SHA-256, not SHA-224 */);
+// RNG adapter: mbedtls callbacks want int(*)(void*, unsigned char*, size_t); ESP-IDF's
+// hardware RNG is void esp_fill_random(void*, size_t). Used only for scalar-multiplication
+// blinding below (MBEDTLS_ECDSA_DETERMINISTIC makes the signature nonce itself RFC-6979
+// deterministic, not randomness-free end to end -- blinding still needs real entropy).
+static int rot_rng(void *ctx, unsigned char *out, size_t len) {
+    (void)ctx;
+    esp_fill_random(out, len);
+    return 0;
+}
+
+bool rot_identity_derive_keypair(const uint8_t *puf_response, size_t puf_len,
+                                  mbedtls_mpi *out_sk_a, uint8_t out_pk_a[ROT_PUBKEY_LEN]) {
+    mbedtls_ecp_group grp;
+    mbedtls_ecp_group_init(&grp);
+    if (mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1) != 0) {
+        mbedtls_ecp_group_free(&grp);
+        return false;
+    }
+
+    const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    static const unsigned char salt[] = "smg_puf_rot_node/rot_identity:ecdsa-sk_A-v1";
+    static const unsigned char info_base[] = "SMG-RoT-P256-sk_A";
+
+    mbedtls_mpi_init(out_sk_a);
+    bool ok = false;
+    // Rejection sampling: HKDF-expand a counter-indexed block until it lands in [1, n-1].
+    // P-256's order n is ~2^256 and the sampled space is also 2^256, so a single iteration
+    // succeeds with overwhelming probability; the loop is a safety net, not the expected path.
+    for (int attempt = 0; attempt < 8 && !ok; ++attempt) {
+        unsigned char okm[32];
+        unsigned char info[sizeof(info_base) + 1];
+        memcpy(info, info_base, sizeof(info_base));
+        info[sizeof(info_base)] = (unsigned char)attempt;
+        if (mbedtls_hkdf(md_info, salt, sizeof(salt) - 1, puf_response, puf_len,
+                          info, sizeof(info), okm, sizeof(okm)) != 0) {
+            break;
+        }
+        if (mbedtls_mpi_read_binary(out_sk_a, okm, sizeof(okm)) != 0) {
+            continue;
+        }
+        if (mbedtls_mpi_cmp_int(out_sk_a, 0) > 0 && mbedtls_mpi_cmp_mpi(out_sk_a, &grp.N) < 0) {
+            ok = true;
+        }
+    }
+    if (!ok) {
+        mbedtls_ecp_group_free(&grp);
+        return false;
+    }
+
+    mbedtls_ecp_point Q;
+    mbedtls_ecp_point_init(&Q);
+    int rc = mbedtls_ecp_mul(&grp, &Q, out_sk_a, &grp.G, rot_rng, NULL);
+    if (rc == 0) {
+        size_t out_len = 0;
+        rc = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_UNCOMPRESSED,
+                                             &out_len, out_pk_a, ROT_PUBKEY_LEN);
+        if (rc == 0 && out_len != ROT_PUBKEY_LEN) {
+            rc = -1;
+        }
+    }
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_ecp_group_free(&grp);
+    if (rc != 0) {
+        mbedtls_mpi_free(out_sk_a);
+        return false;
+    }
+    return true;
 }
 
 bool rot_identity_load_server_ref(uint8_t id_b[ROT_ID_LEN], uint8_t shs_b_ref[ROT_DIGEST_LEN]) {

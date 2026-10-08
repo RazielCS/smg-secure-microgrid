@@ -40,7 +40,7 @@ trials. It intentionally does **not** include:
 - Raw measurement data, logs, or the derived figures/tables reported in the paper. These are
   published in the companion artifact repository:
   <https://github.com/RazielCS/smg-secure-microgrid-paper-artifacts> — manuscript source, raw
-  bench-trial measurements (CSVs, serial logs), expert-validation instruments, and the errata log.
+  bench-trial measurements (CSVs, serial logs), and expert-validation instruments.
 
 ## License
 

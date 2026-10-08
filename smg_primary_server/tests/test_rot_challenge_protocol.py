@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 from rot_challenge_service import (
     RotSession, send_json, recv_json, encrypt_data_message, decrypt_data_message,
-    ROT_ID_LEN, ROT_DIGEST_LEN, ROT_PUBKEY_LEN, CHALLENGE_LEN,
+    ROT_ID_LEN, ROT_DIGEST_LEN, ROT_PUBKEY_LEN, CHALLENGE_LEN, DEVICE_PROOF_DOMAIN_TAG,
 )
 
 
@@ -63,6 +63,7 @@ class FakeDevice:
             raise AssertionError(f"expected challenge, got {msg}")
         id_b = bytes.fromhex(msg["id_b"])
         challenge_b = bytes.fromhex(msg["challenge_b"])
+        eph_pk_b_bytes = bytes.fromhex(msg["eph_pk_b"])
         server_proof = bytes.fromhex(msg["server_proof"])
 
         assert id_b == self.id_b_expected, "server id_b mismatch"
@@ -70,23 +71,39 @@ class FakeDevice:
         # Device does NOT know shs_b (V_B) a priori -- it can only verify server_proof if
         # it already has a pinned V_B reference. The test passes it in via with_server_ref()
         # to mirror rot_identity_load_server_ref().
-        expected_server_proof = hashlib.sha256(self._shs_b_ref + self.challenge_a).digest()
+        expected_server_proof = hashlib.sha256(
+            self._shs_b_ref + self.challenge_a + eph_pk_b_bytes).digest()
         if not secrets.compare_digest(server_proof, expected_server_proof):
             send_json(self.sock, {"type": "error", "error": "server auth failed"})
             raise AssertionError("server_proof did not verify")
 
-        # device_proof = ECDSA_sign(sk_A, SHA256(challenge_b || challenge_a)), matching
-        # rot_session.c's mbedtls_ecdsa_write_signature(..., MBEDTLS_MD_SHA256, msg_hash, ...)
-        # -- msg_hash is signed AS the digest (Prehashed), not re-hashed by the signing call.
-        msg_hash = hashlib.sha256(challenge_b + self.challenge_a).digest()
+        # Fresh ephemeral ECDH key pair for this session only, mirroring rot_session.c.
+        eph_sk_a = ec.generate_private_key(ec.SECP256R1())
+        eph_pk_a_bytes = _pubkey_uncompressed_bytes(eph_sk_a)
+
+        # device_proof = ECDSA_sign(sk_A, SHA256(DOMAIN_TAG || id_a || id_b || challenge_b ||
+        # challenge_a || eph_pk_a || eph_pk_b || server_proof)), matching rot_session.c's
+        # mbedtls_ecdsa_write_signature(..., MBEDTLS_MD_SHA256, msg_hash, ...) -- msg_hash is
+        # signed AS the digest (Prehashed), not re-hashed by the signing call.
+        msg_hash = hashlib.sha256(
+            DEVICE_PROOF_DOMAIN_TAG + self.id_a + id_b + challenge_b + self.challenge_a
+            + eph_pk_a_bytes + eph_pk_b_bytes + server_proof
+        ).digest()
         signature = self.sk_a.sign(msg_hash, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
-        send_json(self.sock, {"type": "response", "device_proof": signature.hex()})
+        send_json(self.sock, {
+            "type": "response",
+            "eph_pk_a": eph_pk_a_bytes.hex(),
+            "device_proof": signature.hex(),
+        })
 
         ack = recv_json(self.sock)
         if ack.get("type") != "session_ack":
             raise AssertionError(f"handshake rejected: {ack}")
 
-        self.key_ab = hashlib.sha256(self._shs_b_ref + self.challenge_a + challenge_b).digest()
+        eph_pk_b = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), eph_pk_b_bytes)
+        shared_secret = eph_sk_a.exchange(ec.ECDH(), eph_pk_b)
+        self.key_ab = hashlib.sha256(
+            shared_secret + self._shs_b_ref + self.challenge_a + challenge_b).digest()
         return self.key_ab
 
     def with_server_ref(self, shs_b_ref: bytes):
@@ -215,6 +232,31 @@ def test_stolen_registry_cannot_forge_device_proof(identities):
     assert raised, "a stolen server record must not be sufficient to impersonate the device"
     assert results["ok"] is False
     assert results["session"].authenticated is False
+
+
+def test_two_sessions_with_same_shs_b_derive_different_keys(identities):
+    """Directly exercises the N1 fix: knowing shs_b (V_B) alone -- e.g. from a flash dump,
+    as in c4_negative_test/ -- must not be enough to derive Key_ab, since each session's
+    key also depends on a fresh ephemeral ECDH exchange discarded after use. Two real
+    handshakes against the same registered node must produce two different keys."""
+    keys = []
+    for _ in range(2):
+        device_sock, server_sock = make_loopback_pair()
+        results = {}
+        t = threading.Thread(target=run_server_in_thread, args=(
+            server_sock, ("127.0.0.1", 0), identities["id_b"],
+            identities["registry"], results))
+        t.start()
+        device = FakeDevice(device_sock, identities["id_a"], identities["sk_a"],
+                             identities["id_b"]).with_server_ref(identities["shs_b"])
+        keys.append(device.handshake())
+        device_sock.close()
+        t.join(timeout=5)
+
+    assert keys[0] != keys[1], (
+        "two sessions against the same node produced the same Key_ab -- "
+        "this would mean Key_ab does not depend on the per-session ephemeral exchange"
+    )
 
 
 def test_data_phase_round_trip_after_handshake(identities):

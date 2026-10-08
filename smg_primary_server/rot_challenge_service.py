@@ -11,31 +11,51 @@ length, followed by that many bytes of UTF-8 JSON. All binary fields are
 lowercase-hex strings in JSON, matching rot_session.c's bin_to_hex/hex_to_bin.
 
 Handshake (mirrors rot_session.c's rot_session_handshake): asymmetric device
-authentication, symmetric per-node server authentication.
+authentication, symmetric per-node server authentication, ephemeral ECDH
+session key (forward secrecy).
   1. Device -> Server: {"type":"hello","id_a":hex16,"challenge_a":hex16}
   2. Server -> Device: {"type":"challenge","id_b":hex16,"challenge_b":hex16,
-                         "server_proof":hex32}
-       server_proof = SHA256(V_B || challenge_a)
+                         "eph_pk_b":hex130,"server_proof":hex32}
+       server_proof = SHA256(V_B || challenge_a || eph_pk_b)
        V_B is this specific node's own server verifier -- a value generated
        fresh per node at registration (tools/register_puf_node.py), never
        shared across the fleet, and pinned into that node's NVS at
        provisioning (tools/provision_server_ref.py in smg_puf_rot_node).
-       Recovering one node's V_B (e.g. by extracting its NVS) therefore only
-       lets an attacker impersonate the server to that single node, not to
-       any other node.
-  3. Device -> Server: {"type":"response","device_proof":hex(DER ECDSA sig)}
-       device_proof = ECDSA_sign(sk_A, SHA256(challenge_b || challenge_a)),
+       Recovering one node's V_B (e.g. by extracting its NVS) lets an
+       attacker impersonate the server to that single node, not to any
+       other node -- and, since Key_ab also depends on the ephemeral ECDH
+       secret below, does not by itself let an attacker decrypt any P3
+       traffic from a past or future session (see Limitations). eph_pk_b is
+       a fresh P-256 public key generated for this session only.
+  3. Device -> Server: {"type":"response","eph_pk_a":hex130,
+                         "device_proof":hex(DER ECDSA sig)}
+       device_proof = ECDSA_sign(sk_A, SHA256(DOMAIN_TAG || id_a || id_b
+                                               || challenge_b || challenge_a
+                                               || eph_pk_a || eph_pk_b
+                                               || server_proof)),
        where (sk_A, pk_A) is a P-256 keypair the device derives fresh each
-       boot from its PUF response (never transmitted or stored). The server
-       verifies the signature against pk_A, captured once at enrollment and
-       stored server-side in the node registry (puf_node_registry.json) --
-       a public value: an attacker who steals the whole registry still
-       cannot forge a device's signature, unlike a scheme that stores a
-       value the device presents directly as its proof.
+       boot from its PUF response (never transmitted or stored), and
+       DOMAIN_TAG is the fixed ASCII string DEVICE_PROOF_DOMAIN_TAG below
+       (must match rot_session.c's DEVICE_PROOF_DOMAIN_TAG exactly). The
+       server verifies the signature against pk_A, captured once at
+       enrollment and stored server-side in the node registry
+       (puf_node_registry.json) -- a public value: an attacker who steals
+       the whole registry still cannot forge a device's signature. Signing
+       over the full transcript (both identifiers, both nonces, both
+       ephemeral keys, and the server's own proof) under a fixed
+       protocol-specific tag additionally commits the authenticated device
+       to this exact session end to end: no field can be substituted in
+       transit, no signature can be replayed across a different id_a/id_b
+       pairing or session, and no signature can be reused in an unrelated
+       protocol that also signs SHA-256 digests with this key. eph_pk_a is
+       a fresh P-256 public key generated for this session only.
   4. Server -> Device: {"type":"session_ack"} (or {"type":"error",...})
 
-  Key_ab = SHA256(V_B || challenge_a || challenge_b)
-  (both sides derive this independently; never transmitted)
+  Z = ECDH(eph_sk_b, eph_pk_a)       -- the server's side of the exchange
+  Key_ab = SHA256(Z || V_B || challenge_a || challenge_b)
+  (both sides derive this independently; neither Z nor Key_ab is ever
+  transmitted; both ephemeral key pairs are discarded once Z is computed,
+  which is what gives Key_ab forward secrecy -- see rot_session.h)
 
 Data phase (P3, mirrors secure_channel.c's demo helper):
   Device -> Server: {"type":"data","nonce":hex24,"ciphertext":hex,"tag":hex32}
@@ -52,7 +72,7 @@ import socket
 import struct
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # matches crypto_utils.py
 
@@ -61,6 +81,9 @@ log = logging.getLogger(__name__)
 ROT_ID_LEN = 16
 ROT_DIGEST_LEN = 32
 ROT_PUBKEY_LEN = 65  # uncompressed SECP256R1 point: 0x04 || X(32) || Y(32)
+
+# Must match rot_session.c's DEVICE_PROOF_DOMAIN_TAG exactly (bytes, no trailing NUL).
+DEVICE_PROOF_DOMAIN_TAG = b"SMG-RoT-device-proof-v1"
 CHALLENGE_LEN = 16
 GCM_NONCE_LEN = 12
 GCM_TAG_LEN = 16
@@ -218,12 +241,22 @@ class RotSession:
             return False
 
         challenge_b = secrets.token_bytes(CHALLENGE_LEN)
-        server_proof = hashlib.sha256(shs_b + challenge_a).digest()
+
+        # Fresh ephemeral ECDH key pair for this session only -- never persisted, discarded
+        # once Z is computed below. This is what gives Key_ab forward secrecy.
+        eph_sk_b = ec.generate_private_key(ec.SECP256R1())
+        eph_pk_b_bytes = eph_sk_b.public_key().public_bytes(
+            encoding=serialization.Encoding.X962,
+            format=serialization.PublicFormat.UncompressedPoint,
+        )
+
+        server_proof = hashlib.sha256(shs_b + challenge_a + eph_pk_b_bytes).digest()
 
         send_json(self.conn, {
             "type": "challenge",
             "id_b": self.id_b.hex(),
             "challenge_b": challenge_b.hex(),
+            "eph_pk_b": eph_pk_b_bytes.hex(),
             "server_proof": server_proof.hex(),
         })
 
@@ -231,14 +264,29 @@ class RotSession:
         if resp.get("type") != "response":
             self._send_error(f"expected response, got: {resp.get('type')}")
             return False
+        eph_pk_a_bytes = hex_to_bin(resp["eph_pk_a"], ROT_PUBKEY_LEN)
         device_proof = bytes.fromhex(resp["device_proof"])  # DER ECDSA signature, variable length
+
+        try:
+            eph_pk_a = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), eph_pk_a_bytes)
+        except ValueError:
+            log.warning("[%s] malformed eph_pk_a from node=%s", self.addr, self.node_label)
+            self._send_error("malformed ephemeral public key")
+            return False
 
         # rot_session.c's mbedtls_ecdsa_write_signature() signs msg_hash AS the digest (mbedtls's
         # low-level ECDSA API takes an already-hashed value, it does not hash its input). The
         # high-level `cryptography` verify() call below must therefore be told the input is
         # already a digest (utils.Prehashed) -- otherwise it would hash msg_hash a second time
         # and every signature would fail to verify despite being correctly formed.
-        msg_hash = hashlib.sha256(challenge_b + challenge_a).digest()
+        #
+        # Covers the full transcript (both ids, both nonces, both ephemeral keys, and the
+        # server's own proof) under the fixed domain tag -- must match rot_session.c's
+        # msg_hash construction field-for-field and byte-for-byte.
+        msg_hash = hashlib.sha256(
+            DEVICE_PROOF_DOMAIN_TAG + id_a + self.id_b + challenge_b + challenge_a
+            + eph_pk_a_bytes + eph_pk_b_bytes + server_proof
+        ).digest()
         try:
             pk_a.verify(device_proof, msg_hash, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
         except InvalidSignature:
@@ -247,7 +295,8 @@ class RotSession:
             self._send_error("device authentication failed")
             return False
 
-        self.key_ab = hashlib.sha256(shs_b + challenge_a + challenge_b).digest()
+        shared_secret = eph_sk_b.exchange(ec.ECDH(), eph_pk_a)
+        self.key_ab = hashlib.sha256(shared_secret + shs_b + challenge_a + challenge_b).digest()
         self.authenticated = True
         send_json(self.conn, {"type": "session_ack"})
         log.info("[%s] handshake OK, node=%s authenticated", self.addr, self.node_label)

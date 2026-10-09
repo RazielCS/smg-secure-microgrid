@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """
 Provisioning tool -- writes the pinned server reference (ID_B, this node's own V_B)
-into an NVS partition image for the PUF-based ROT firmware (smg_puf_rot_node),
-matching rot_identity.c's expectations:
+and, optionally, the node's WiFi credentials into an NVS partition image for the
+PUF-based ROT firmware (smg_puf_rot_node), matching rot_identity.c's and
+wifi_station.c's expectations:
 
     namespace "rot_identity"
         key "id_b"       blob, ROT_ID_LEN (16) bytes
         key "shs_b_ref"  blob, ROT_DIGEST_LEN (32) bytes
+    namespace "wifi_creds" (only written if --wifi-ssid/--wifi-pass are given)
+        key "ssid"       string, <=32 bytes
+        key "pass"       string, <=64 bytes
+
+Writing the WiFi credential here, rather than as a firmware-source constant, keeps it
+out of the compiled binary and the public repository entirely -- it is the same
+out-of-band provisioning pattern already used for shs_b_ref. The SSID/password are
+necessarily the same value across every node on the fleet's WPA2-PSK access point
+(that is inherent to WPA2-PSK, not specific to this tool); this change addresses the
+"hardcoded in firmware source" exposure (OWASP I1), not the fleet-wide-shared-secret
+property of WPA2-PSK itself.
 
 This is the device-side half of the server pinning step described in the paper's
 "Root of Trust Establishment" section (Table rotpsim, Phase 1: "pin (store): {ID_B,
@@ -100,13 +112,20 @@ def find_idf_python(explicit=None):
     return sys.executable  # last resort; will likely fail with a clear error
 
 
-def write_nvs_csv(csv_path, id_b_hex, shs_b_hex):
+def write_nvs_csv(csv_path, id_b_hex, shs_b_hex, wifi_ssid=None, wifi_pass=None):
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["key", "type", "encoding", "value"])
         w.writerow(["rot_identity", "namespace", "", ""])
         w.writerow(["id_b", "data", "hex2bin", id_b_hex])
         w.writerow(["shs_b_ref", "data", "hex2bin", shs_b_hex])
+        if wifi_ssid is not None and wifi_pass is not None:
+            # Same out-of-band provisioning pattern as id_b/shs_b_ref above: the real
+            # SSID/password never appear in firmware source or the compiled binary,
+            # only in this generated NVS image (see wifi_station.c's wifi_load_credentials()).
+            w.writerow(["wifi_creds", "namespace", "", ""])
+            w.writerow(["ssid", "data", "string", wifi_ssid])
+            w.writerow(["pass", "data", "string", wifi_pass])
 
 
 def generate_nvs_image(nvs_gen_script, idf_python, csv_path, out_bin, size):
@@ -125,6 +144,13 @@ def main():
     ap.add_argument("--shs-b", help="32-byte PER-NODE server verifier (V_B) as 64 hex chars "
                                      "(default: random -- normally supplied by register_puf_node.py, "
                                      "a distinct value for each node)")
+    ap.add_argument("--wifi-ssid", help="WiFi SSID to provision into this node's NVS image "
+                                         "(same value for every node on the fleet's WiFi AP). "
+                                         "If omitted, no WiFi credentials are written and the "
+                                         "firmware's wifi_load_credentials() will fail until a "
+                                         "separate provisioning run supplies them.")
+    ap.add_argument("--wifi-pass", help="WiFi password/passphrase to provision alongside "
+                                         "--wifi-ssid (required if --wifi-ssid is given)")
     ap.add_argument("--out-bin", default=os.path.join(PROJECT_ROOT, "server_ref_nvs.bin"),
                      help="Output flashable NVS partition image")
     ap.add_argument("--server-identity", default=DEFAULT_SERVER_IDENTITY_PATH,
@@ -142,6 +168,12 @@ def main():
         ap.error(f"--id-b must be {ROT_ID_LEN * 2} hex chars ({ROT_ID_LEN} bytes)")
     if len(shs_b_hex) != ROT_DIGEST_LEN * 2:
         ap.error(f"--shs-b must be {ROT_DIGEST_LEN * 2} hex chars ({ROT_DIGEST_LEN} bytes)")
+    if bool(args.wifi_ssid) != bool(args.wifi_pass):
+        ap.error("--wifi-ssid and --wifi-pass must be given together")
+    if args.wifi_ssid and len(args.wifi_ssid.encode()) > 32:
+        ap.error("--wifi-ssid must fit in 32 bytes (WiFi SSID limit)")
+    if args.wifi_pass and len(args.wifi_pass.encode()) > 64:
+        ap.error("--wifi-pass must fit in 64 bytes (WPA2 passphrase limit)")
 
     nvs_gen_script = find_nvs_partition_gen()
     if nvs_gen_script is None:
@@ -153,7 +185,7 @@ def main():
 
     tmpdir = tempfile.mkdtemp(prefix="puf_provision_")
     csv_path = os.path.join(tmpdir, "server_ref.csv")
-    write_nvs_csv(csv_path, id_b_hex, shs_b_hex)
+    write_nvs_csv(csv_path, id_b_hex, shs_b_hex, args.wifi_ssid, args.wifi_pass)
 
     result = generate_nvs_image(nvs_gen_script, idf_python, csv_path, args.out_bin,
                                  NVS_PARTITION_SIZE)
@@ -179,6 +211,13 @@ def main():
     print()
     print("id_b         =", id_b_hex, "(fleet-wide, same for every node)")
     print("shs_b_ref    =", shs_b_hex, "(THIS node's own V_B)")
+    if args.wifi_ssid:
+        print("wifi_ssid    =", args.wifi_ssid, "(fleet-wide, same for every node)")
+        print("wifi_pass    = <provisioned, not printed>")
+    else:
+        print("WiFi credentials NOT provisioned in this image -- run again with "
+              "--wifi-ssid/--wifi-pass (can reuse the same --id-b/--shs-b) before this "
+              "node can connect, or run a separate pass once and reflash just the NVS image.")
     print()
     print("NOT executed (requires a connected ESP32 -- run manually once hardware is")
     print("available, after erasing/flashing the rest of the firmware as usual):")

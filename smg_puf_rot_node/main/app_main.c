@@ -26,8 +26,7 @@ static void bin_to_hex(const uint8_t *bin, size_t len, char *out /* len*2+1 */) 
     out[2 * len] = '\0';
 }
 
-// Placeholder server address -- see wifi_station.h TODO (WiFi credentials) for the same
-// caveat. RPi4 primary agent as WiFi AP gateway, matching the SMG bench setup.
+// Server address: RPi4 primary agent as WiFi AP gateway, matching the SMG bench setup.
 #define SERVER_IP   "10.42.0.1"
 #define SERVER_PORT 5001
 

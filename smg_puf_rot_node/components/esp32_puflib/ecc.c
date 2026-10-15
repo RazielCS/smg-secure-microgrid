@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <esp_system.h>
+#include "mbedtls/sha256.h"
 #include "ecc.h"
 #include "bit_array.h"
 #include "nvs.h"
@@ -285,6 +286,33 @@ void provision_puf_calculate() {
 
     free(puf_freq_rtc);
     free(puf_freq_sleep);
+}
+
+bool get_mask_ecc_hash(uint8_t out_hash[32]) {
+    uint8_t *mask = NULL, *ecc = NULL;
+    size_t mask_len = 0, ecc_len = 0;
+    bool ok = false;
+
+    if (!get_blob(&mask, &mask_len, PUF_MASK_KEY)) {
+        goto done;
+    }
+    if (!get_blob(&ecc, &ecc_len, ECC_DATA_KEY)) {
+        goto done;
+    }
+
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, mask, mask_len);
+    mbedtls_sha256_update(&ctx, ecc, ecc_len);
+    mbedtls_sha256_finish(&ctx, out_hash);
+    mbedtls_sha256_free(&ctx);
+    ok = true;
+
+done:
+    free(mask);
+    free(ecc);
+    return ok;
 }
 
 void enroll_puf() {

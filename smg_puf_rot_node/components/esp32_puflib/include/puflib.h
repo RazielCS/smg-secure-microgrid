@@ -69,5 +69,15 @@ void enroll_puf();
  */
 void puflib_wake_up_stub(void);
 
+/**
+ * SECURITY FIX (found in a journal review pass, 2026-10-15): returns SHA-256(mask || ecc) over
+ * the stable-bit mask and ECC helper data stored in NVS. Callers should fold this into their
+ * own key derivation (e.g. as extra HKDF info) so that manipulating the unauthenticated helper
+ * data in NVS changes the derived key unpredictably, instead of leaking bit-level information
+ * through the ECC decoder's error count.
+ * @param out_hash 32-byte buffer to receive the digest
+ * @return true on success, false if either blob is missing
+ */
+bool get_mask_ecc_hash(uint8_t out_hash[32]);
 
 #endif //ESP32_PUF_PUFLIB_H

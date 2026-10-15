@@ -149,6 +149,19 @@ bool rot_identity_derive_keypair(const uint8_t *puf_response, size_t puf_len,
     static const unsigned char salt[] = "smg_puf_rot_node/rot_identity:ecdsa-sk_A-v1";
     static const unsigned char info_base[] = "SMG-RoT-P256-sk_A";
 
+    // SECURITY FIX (found in a journal review pass, 2026-10-15): PUF_MASK/ECC_DATA are stored
+    // in NVS without integrity protection. Without this, an attacker with physical write
+    // access to this chip's flash could manipulate them and use the ECC decoder's error count
+    // (surfaced via diagnostic logging, see puf_measurement.c) as an oracle on individual
+    // response bits -- a helper-data-manipulation attack against the repetition code. Binding
+    // a hash of the current mask/ECC into the HKDF info means any manipulation changes the
+    // derived key unpredictably instead of leaking anything bit-level.
+    uint8_t mask_ecc_hash[32];
+    if (!get_mask_ecc_hash(mask_ecc_hash)) {
+        mbedtls_ecp_group_free(&grp);
+        return false;
+    }
+
     mbedtls_mpi_init(out_sk_a);
     bool ok = false;
     // Rejection sampling: HKDF-expand a counter-indexed block until it lands in [1, n-1].
@@ -156,9 +169,10 @@ bool rot_identity_derive_keypair(const uint8_t *puf_response, size_t puf_len,
     // succeeds with overwhelming probability; the loop is a safety net, not the expected path.
     for (int attempt = 0; attempt < 8 && !ok; ++attempt) {
         unsigned char okm[32];
-        unsigned char info[sizeof(info_base) + 1];
+        unsigned char info[sizeof(info_base) + sizeof(mask_ecc_hash) + 1];
         memcpy(info, info_base, sizeof(info_base));
-        info[sizeof(info_base)] = (unsigned char)attempt;
+        memcpy(info + sizeof(info_base), mask_ecc_hash, sizeof(mask_ecc_hash));
+        info[sizeof(info_base) + sizeof(mask_ecc_hash)] = (unsigned char)attempt;
         if (mbedtls_hkdf(md_info, salt, sizeof(salt) - 1, puf_response, puf_len,
                           info, sizeof(info), okm, sizeof(okm)) != 0) {
             break;

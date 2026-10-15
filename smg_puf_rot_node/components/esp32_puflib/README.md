@@ -18,6 +18,15 @@
 >   estimate (`puf_measurement.c`, `get_puf_response()` and `puf_response_reset_calculate()`).
 >   See the paper's Limitations and Section on RoT verifiability for the reasoning and the
 >   real-hardware before/after data.
+> - **Security fix:** `PUF_MASK`/`ECC_DATA` are legitimate public helper data (the 8x
+>   repetition code is a code-offset secure sketch), but they are stored in NVS without
+>   integrity protection, so an attacker with physical write access to this chip's flash could
+>   manipulate them and use the ECC decoder's error count (surfaced via diagnostic logging) as
+>   an oracle on individual response bits -- a helper-data-manipulation attack. A new function,
+>   `get_mask_ecc_hash()`, returns SHA-256(mask || ecc); `smg_puf_rot_node`'s key derivation
+>   (`rot_identity.c`) binds this hash into its HKDF info, so manipulating either blob changes
+>   the derived key unpredictably instead of leaking anything. Requires `mbedtls`
+>   (`CMakeLists.txt` `REQUIRES` updated accordingly).
 >
 > Below is the upstream README, unmodified except for this notice.
 

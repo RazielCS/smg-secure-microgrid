@@ -43,9 +43,10 @@ idf.py -p <PORT> flash monitor
 `sdkconfig.defaults` enables the enlarged NVS partition (`partitions_puf.csv`, 0x50000 bytes
 for the PUF helper data + server reference), HKDF, and hardware-accelerated AES/SHA/ECDSA.
 
-**Before building**, set a real WiFi passphrase in `main/wifi_station.c`
-(`WIFI_PASS "CHANGE_ME_WIFI_PASSWORD"`) — the real bench password is not published (see
-Materials Availability in the paper).
+WiFi SSID/password are **not** a firmware-source constant: `wifi_station.c` reads them from
+NVS (namespace `wifi_creds`) at runtime, provisioned the same way as the server reference
+below (`tools/provision_server_ref.py --wifi-ssid/--wifi-pass`) — the real bench credentials
+are not published (see Materials Availability in the paper).
 
 ## Provisioning a node
 
@@ -59,14 +60,20 @@ Materials Availability in the paper).
 3. Register the node from the printed export: `python register_puf_node.py --id-a <id_a>
    --pk-a <pk_a> --label <node-label>` (writes to `puf_node_registry.json`, and generates a
    fresh per-node server verifier `V_B` for this node).
-4. Pin the server reference on the device: `tools/provision_server_ref.py --id-b <id_b>
-   --shs-b <V_B> --out-bin <label>_server_ref_nvs.bin` builds an NVS partition image
-   (`nvs_partition_gen.py` from the ESP-IDF toolchain), flashed at the NVS partition offset.
-   **This flash wipes the whole NVS partition, including the PUF enrollment** — the device
-   will re-enroll (and derive a *different* `pk_a`) on its next boot, so step 1–3 must be
-   repeated with the new value if this happens after enrollment. Generate and flash the
-   node's `V_B` image before the device re-enrolls, then capture and register its final
-   `pk_a` afterward — not the other way around.
+4. Pin the server reference (and WiFi credentials) on the device. **Caveat (open issue,
+   found in a journal review pass, 2026-10-15):** `provision_server_ref.py --out-bin` calls
+   ESP-IDF's `nvs_partition_gen.py`, which always builds a complete replacement NVS image from
+   its CSV — there is no merge mode. Flashing that image after step 1 has already run
+   overwrites the PUF enrollment (`PUF_MASK`/`ECC_DATA`/etc.) along with everything else,
+   forcing a full re-enrollment (and a new `pk_a`) on the next boot. There is currently no
+   supported way to flash *only* the server-reference/WiFi namespaces without this risk; this
+   work's own bring-up worked around it with a temporary, hand-written firmware patch that
+   wrote those two namespaces via the live NVS API instead of reflashing the partition (not
+   committed here, since it is a one-off debugging aid, not reusable tooling). Until
+   `provision_server_ref.py` gains a real merge mode (read back the device's existing
+   `PUF_MASK`/`ECC_DATA` and include them unchanged in the generated image), treat steps 1–4
+   as needing to run together on a device you are willing to fully re-enroll, not as
+   independently repeatable steps.
 5. Subsequent boots: enrollment + server reference both present in NVS → the device
    connects to WiFi, connects to the server, reconstructs its PUF response, and runs the
    P2/P3 handshake automatically.
@@ -75,10 +82,13 @@ Materials Availability in the paper).
 
 The raw bench data (30 hard-reset trials against SMG_NODE_01) is published in the companion
 artifact repository:
-`case_study_SMG/Implementation/smg_puf_rot_node/bench_results_20261005/` at
+`case study SMG/Implementation/smg_puf_rot_node/bench_results_20261015_fixed/` at
 https://github.com/RazielCS/smg-secure-microgrid-paper-artifacts — including the per-run
 raw serial logs, the parsed `summary.csv`, the bench script itself (`run_bench.py`), and the
-server-side log captured during the run.
+server-side log captured during the run. Earlier rounds in the same directory
+(`bench_results_20261015/`, `bench_results_20261013/`, `bench_results_20261005/`) are
+superseded and kept for provenance; see that directory's own README for what changed between
+them.
 
 To reproduce against your own hardware:
 
@@ -88,7 +98,7 @@ To reproduce against your own hardware:
 3. `pip install pyserial` (in addition to `smg_primary_server/requirements.txt` on the
    server host), then from this repository:
    ```
-   python bench_results_20261005/run_bench.py --port <ESP32_SERIAL_PORT> --runs 30 --window 35
+   python bench_results_20261015_fixed/run_bench.py --port <ESP32_SERIAL_PORT> --runs 30 --window 45
    ```
    (`run_bench.py` is published alongside the data in the artifact repository, not in this
    source repository, since it is a measurement script rather than firmware/server source;

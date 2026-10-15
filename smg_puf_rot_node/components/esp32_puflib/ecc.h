@@ -61,4 +61,18 @@ int correct_data(const uint8_t* masked_data, const uint8_t* ecc_data, size_t len
 void apply_puf_mask(const uint8_t *mask, size_t mask_hw, uint8_t *puf_response,
                     size_t len, uint8_t *result, size_t res_len);
 
+/**
+ * SECURITY FIX (found in a journal review pass, 2026-10-15): binds the stable-bit mask and
+ * ECC helper data into a SHA-256 digest, so callers can fold it into their own key derivation
+ * (e.g. as extra HKDF info). PUF_MASK/ECC_DATA are stored in NVS without integrity protection;
+ * without this, an attacker with physical write access to the same chip's flash could run a
+ * helper-data-manipulation attack, using the ECC decoder's error count (surfaced via
+ * diagnostic logging) as an oracle on individual response bits. Binding this hash into the
+ * derived key means any manipulation changes the derived key unpredictably instead of
+ * revealing bit-level information.
+ * @param out_hash 32-byte buffer to receive the SHA-256(mask || ecc) digest
+ * @return true on success, false if either blob is missing from NVS
+ */
+bool get_mask_ecc_hash(uint8_t out_hash[32]);
+
 #endif //ESP32_PUF_ECC_H

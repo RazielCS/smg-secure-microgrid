@@ -24,14 +24,25 @@ Root of Trust Establishment / STRIDE-to-Protocol sections.
 | Directory | Role | Hardware target |
 |---|---|---|
 | [`smg_puf_rot_node/`](smg_puf_rot_node/) | Secondary-node firmware: PUF-based identity, Root of Trust, secure-channel client | ESP32 (C / ESP-IDF) |
-| [`smg_primary_server/`](smg_primary_server/) | Primary-agent software: PUF challenge-response server, node registry, EMS coordination | Raspberry Pi 4B (CPython) |
+| [`smg_primary_server/`](smg_primary_server/) | Primary-agent software: PUF challenge-response server, node registry (active); also holds a superseded module set, see Reproducibility scope below | Raspberry Pi 4B (CPython) |
 
 Each directory has its own `README.md` with setup and provisioning instructions.
 
 ## Reproducibility scope
 
-This repository contains **source code only** — the exact software deployed for the paper's bench
-trials. It intentionally does **not** include:
+This repository contains **source code only**. The code that actually ran during the paper's
+bench trials is `smg_puf_rot_node/` (firmware) and, on the server side, `puf_server.py` plus
+`rot_challenge_service.py`.
+
+`smg_primary_server/` also contains an earlier module set (`auth_service.py`, `server.py`,
+`pc_client.py`, `protocol.py`, `crypto_utils.py`, `ems_coordinator.py`) from a prior,
+superseded hash-chain-based protocol design. It is **not** the software deployed for the
+reported bench trials; it is kept only because some of its functionality (anomaly-based trust
+scoring and EMS coordination, Stage~7.2.1) has not yet been ported to `rot_challenge_service.py`
+(see the paper's Limitations), and it is not guaranteed to run against the current
+`rot_challenge_service.py` or `smg_puf_rot_node/` firmware.
+
+This repository intentionally does **not** include:
 
 - Provisioned node secrets (`puf_node_registry.json`, `puf_server_identity.json`, NVS images) — see
   the `.example.json` templates and the Root of Trust provisioning steps in

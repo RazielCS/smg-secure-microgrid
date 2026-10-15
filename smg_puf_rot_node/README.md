@@ -13,10 +13,12 @@ for the full description):
   its PUF response (HKDF, RFC 5869, with rejection sampling) and registers its public key
   `pk_a` with the server once; the private key `sk_a` is never transmitted or stored.
 - **P2 — Root of Trust (session identification):** a 4-message nonce-bound mutual
-  authentication (`rot_session.c`). Asymmetric on the device side (ECDSA signature over a
-  server-issued nonce, verified against `pk_a`) and symmetric on the server side (a per-node
-  verifier `V_B`, proven via a nonce-bound hash). `Key_ab = SHA-256(V_B || challenge_A ||
-  challenge_B)`. Neither `sk_a` nor `V_B` is ever transmitted.
+  authentication (`rot_session.c`). Asymmetric on the device side (ECDSA signature over the
+  full transcript, verified against `pk_a`) and symmetric on the server side (a per-node
+  verifier `V_B`, proven via a nonce-bound hash). Each side also exchanges a fresh,
+  session-only ephemeral EC key pair; `Key_ab = SHA-256(Z || V_B || challenge_A ||
+  challenge_B)`, where `Z` is the resulting ECDH shared secret, discarded after use, giving
+  the session key forward secrecy. Neither `sk_a`, `V_B`, nor `Z` is ever transmitted.
 - **P3 — Secure channel:** AES-256-GCM (`secure_channel.c`, via `mbedtls`) under `Key_ab`.
 
 Server-side counterpart: `smg_primary_server/rot_challenge_service.py` + `puf_server.py`.
@@ -25,12 +27,9 @@ Server-side counterpart: `smg_primary_server/rot_challenge_service.py` + `puf_se
 
 - ESP-IDF **v5.4.2** (other versions not tested).
 - [`esp32_puflib`](https://github.com/staniond/esp32_puflib) (Stanicek/CTU FIT, 2022, MIT
-  license) — **not vendored here**; clone it as a sibling of this repository's root:
-  ```
-  git clone https://github.com/RazielCS/smg-secure-microgrid
-  git clone https://github.com/staniond/esp32_puflib smg-secure-microgrid/esp32_puflib
-  ```
-  `CMakeLists.txt`'s `EXTRA_COMPONENT_DIRS` expects this exact layout.
+  license) — vendored under `components/esp32_puflib/` with the fixes this work made to it;
+  see that directory's README for the exact diff from upstream. No separate clone or
+  `EXTRA_COMPONENT_DIRS` entry needed: ESP-IDF auto-discovers `components/` subdirectories.
 
 ## Build and flash
 

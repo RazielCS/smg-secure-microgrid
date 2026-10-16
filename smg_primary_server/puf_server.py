@@ -1,14 +1,18 @@
 """
-SMG Primary Server -- PUF challenge-response protocol runner.
+SMG Primary Server -- PUF-based Root of Trust protocol runner.
 
-Entry point for the Root of Trust protocol (rot_challenge_service.py): PUF-seeded
-asymmetric device authentication and per-node symmetric server authentication.
+Standalone entry point for rot_challenge_service.py, the server-side
+counterpart of the C/ESP-IDF firmware (smg_puf_rot_node).
 
 Prerequisites:
-    1. Run smg_puf_rot_node/tools/provision_server_ref.py once to create
-       puf_server_identity.json (id_b).
-    2. Register each enrolled device with tools/register_puf_node.py once its
-       pk_a has been captured from hardware (requires a connected ESP32).
+    1. Run smg_puf_rot_node/tools/provision_server_ref.py once (no --shs-b) to
+       establish id_b and create puf_server_identity.json.
+    2. For each device: capture its (id_a, pk_a) via the firmware's one-time
+       provisioning-export serial printout, then run
+       tools/register_puf_node.py --id-a ... --pk-a ... to register it and
+       generate that node's own V_B, and run provision_server_ref.py again
+       with --id-b (the established value) and --shs-b (the V_B just
+       generated) to produce that node's NVS image.
 
 Usage:
     python puf_server.py [--host 0.0.0.0] [--port 5001]
@@ -34,8 +38,8 @@ logging.basicConfig(
 log = logging.getLogger("puf_server")
 
 
-def handle_client(conn, addr, id_b, shs_b, registry):
-    session = RotSession(conn, addr, id_b, shs_b, registry)
+def handle_client(conn, addr, id_b, registry):
+    session = RotSession(conn, addr, id_b, registry)
     try:
         session.run()
     finally:
@@ -54,7 +58,7 @@ def main():
     args = ap.parse_args()
 
     try:
-        id_b, shs_b = load_server_identity(args.server_identity)
+        id_b = load_server_identity(args.server_identity)
     except FileNotFoundError:
         log.error("Server identity not found: %s", args.server_identity)
         log.error("Run smg_puf_rot_node/tools/provision_server_ref.py first.")
@@ -80,7 +84,7 @@ def main():
         while True:
             conn, addr = srv.accept()
             log.info("Incoming connection from %s:%d", *addr)
-            t = threading.Thread(target=handle_client, args=(conn, addr, id_b, shs_b, registry),
+            t = threading.Thread(target=handle_client, args=(conn, addr, id_b, registry),
                                   daemon=True)
             t.start()
     except KeyboardInterrupt:

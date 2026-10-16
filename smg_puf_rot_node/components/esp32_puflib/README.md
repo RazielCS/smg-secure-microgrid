@@ -29,7 +29,13 @@
 >   (an initial version hashed only the first pair, found incomplete in a later review pass).
 >   `smg_puf_rot_node`'s key derivation (`rot_identity.c`) binds this hash into its HKDF info,
 >   so manipulating any of the four blobs changes the derived key unpredictably instead of
->   leaking anything. Requires `mbedtls` (`CMakeLists.txt` `REQUIRES` updated accordingly).
+>   leaking anything. Confirmed directly on real hardware: flipping a single bit in either
+>   `PUF_SLEEP_MASK` or `ECC_SLEEP_DATA` (leaving the other three blobs and the physical PUF
+>   untouched) made the server reject the device's signature both times, even though
+>   first-attempt reconstruction reports a normal error rate (it never reads the retry-path
+>   blobs); restoring the unmodified image re-established a successful handshake (see the
+>   paper's Section on RoT verifiability). Requires `mbedtls` (`CMakeLists.txt` `REQUIRES`
+>   updated accordingly).
 >   **Known residual limitation:** the ECC decoder's error count is computed and logged to UART
 >   *before* this binding is applied, so it remains an observable side channel independent of
 >   the derived key for an attacker with physical access; this binding closes the

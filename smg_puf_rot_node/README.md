@@ -82,11 +82,12 @@ are not published (see Materials Availability in the paper).
 
 The raw bench data (30 hard-reset trials against SMG_NODE_01) is published in the companion
 artifact repository:
-`case study SMG/Implementation/smg_puf_rot_node/bench_results_20261015_fixed/` at
+`case study SMG/Implementation/smg_puf_rot_node/bench_results_20261016_hdm2/` at
 https://github.com/RazielCS/smg-secure-microgrid-paper-artifacts — including the per-run
 raw serial logs, the parsed `summary.csv`, the bench script itself (`run_bench.py`), and the
 server-side log captured during the run. Earlier rounds in the same directory
-(`bench_results_20261015/`, `bench_results_20261013/`, `bench_results_20261005/`) are
+(`bench_results_20261015_hdm/`, `bench_results_20261015_fixed/`, `bench_results_20261015/`,
+`bench_results_20261013/`, `bench_results_20261005/`) are
 superseded and kept for provenance; see that directory's own README for what changed between
 them.
 
@@ -98,7 +99,7 @@ To reproduce against your own hardware:
 3. `pip install pyserial` (in addition to `smg_primary_server/requirements.txt` on the
    server host), then from this repository:
    ```
-   python bench_results_20261015_fixed/run_bench.py --port <ESP32_SERIAL_PORT> --runs 30 --window 45
+   python bench_results_20261016_hdm2/run_bench.py --port <ESP32_SERIAL_PORT> --runs 30 --window 45
    ```
    (`run_bench.py` is published alongside the data in the artifact repository, not in this
    source repository, since it is a measurement script rather than firmware/server source;

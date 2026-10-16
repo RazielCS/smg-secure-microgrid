@@ -289,8 +289,15 @@ void provision_puf_calculate() {
 }
 
 bool get_mask_ecc_hash(uint8_t out_hash[32]) {
-    uint8_t *mask = NULL, *ecc = NULL;
-    size_t mask_len = 0, ecc_len = 0;
+    // SECURITY FIX (found in a journal review pass, 2026-10-16): this used to hash only
+    // PUF_MASK/ECC_DATA, the pair used by the first-attempt (RTC) reconstruction path. The
+    // retry path (puf_response_reset_calculate(), the deep-sleep reconstruction) uses a
+    // separate pair, PUF_SLEEP_MASK/ECC_SLEEP_DATA, which that omission left unbound from the
+    // derived key -- manipulating those blobs specifically to trigger/exploit the retry path
+    // reopened the same helper-data-manipulation oracle this function exists to close. All
+    // four blobs are now hashed together, so either reconstruction path is covered.
+    uint8_t *mask = NULL, *ecc = NULL, *sleep_mask = NULL, *sleep_ecc = NULL;
+    size_t mask_len = 0, ecc_len = 0, sleep_mask_len = 0, sleep_ecc_len = 0;
     bool ok = false;
 
     if (!get_blob(&mask, &mask_len, PUF_MASK_KEY)) {
@@ -299,12 +306,20 @@ bool get_mask_ecc_hash(uint8_t out_hash[32]) {
     if (!get_blob(&ecc, &ecc_len, ECC_DATA_KEY)) {
         goto done;
     }
+    if (!get_blob(&sleep_mask, &sleep_mask_len, PUF_SLEEP_MASK_KEY)) {
+        goto done;
+    }
+    if (!get_blob(&sleep_ecc, &sleep_ecc_len, ECC_SLEEP_DATA_KEY)) {
+        goto done;
+    }
 
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
     mbedtls_sha256_starts(&ctx, 0);
     mbedtls_sha256_update(&ctx, mask, mask_len);
     mbedtls_sha256_update(&ctx, ecc, ecc_len);
+    mbedtls_sha256_update(&ctx, sleep_mask, sleep_mask_len);
+    mbedtls_sha256_update(&ctx, sleep_ecc, sleep_ecc_len);
     mbedtls_sha256_finish(&ctx, out_hash);
     mbedtls_sha256_free(&ctx);
     ok = true;
@@ -312,6 +327,8 @@ bool get_mask_ecc_hash(uint8_t out_hash[32]) {
 done:
     free(mask);
     free(ecc);
+    free(sleep_mask);
+    free(sleep_ecc);
     return ok;
 }
 

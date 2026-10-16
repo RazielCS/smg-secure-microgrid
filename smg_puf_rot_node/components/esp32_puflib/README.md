@@ -23,10 +23,18 @@
 >   integrity protection, so an attacker with physical write access to this chip's flash could
 >   manipulate them and use the ECC decoder's error count (surfaced via diagnostic logging) as
 >   an oracle on individual response bits -- a helper-data-manipulation attack. A new function,
->   `get_mask_ecc_hash()`, returns SHA-256(mask || ecc); `smg_puf_rot_node`'s key derivation
->   (`rot_identity.c`) binds this hash into its HKDF info, so manipulating either blob changes
->   the derived key unpredictably instead of leaking anything. Requires `mbedtls`
->   (`CMakeLists.txt` `REQUIRES` updated accordingly).
+>   `get_mask_ecc_hash()`, returns SHA-256 over all four stable-bit-mask/ECC blobs --
+>   `PUF_MASK`/`ECC_DATA` (first-attempt/RTC path) and `PUF_SLEEP_MASK`/`ECC_SLEEP_DATA`
+>   (deep-sleep retry path) -- so both reconstruction paths are covered, not just the first one
+>   (an initial version hashed only the first pair, found incomplete in a later review pass).
+>   `smg_puf_rot_node`'s key derivation (`rot_identity.c`) binds this hash into its HKDF info,
+>   so manipulating any of the four blobs changes the derived key unpredictably instead of
+>   leaking anything. Requires `mbedtls` (`CMakeLists.txt` `REQUIRES` updated accordingly).
+>   **Known residual limitation:** the ECC decoder's error count is computed and logged to UART
+>   *before* this binding is applied, so it remains an observable side channel independent of
+>   the derived key for an attacker with physical access; this binding closes the
+>   *predictable-key* consequence of helper-data manipulation, not that diagnostic output
+>   itself (see the paper's Limitations).
 >
 > Below is the upstream README, unmodified except for this notice.
 

@@ -1,5 +1,7 @@
 # SMG Secure IoT Ecosystem — Companion Implementation
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23505100.svg)](https://doi.org/10.5281/zenodo.23505100)
+
 Companion code repository for the case study described in:
 
 > R. Campos-Sanchez, L. Hernandez-Martinez, C. Feregrino-Uribe, A. Penuelas-Angulo, D. Cruz-Aguilar.

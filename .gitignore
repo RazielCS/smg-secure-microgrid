@@ -1,0 +1,17 @@
+# Provisioned secrets — never commit real node credentials
+smg_primary_server/puf_node_registry.json
+smg_primary_server/puf_server_identity.json
+
+# Build artifacts
+build/
+sdkconfig
+*.bin
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor/OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+# ESP-IDF Partition Table -- enlarged NVS partition for esp32_puflib helper data
+# (PUF_MASK + ECC_DATA blobs under NVS namespace "storage", plus this project's own
+# "rot_identity" namespace: ID_A, server reference ShS_B_ref/ID_B). Default partition
+# table's NVS region (~24KB) is too small once PUF helper data is added; sized per the
+# esp32_puflib README example.
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x50000,
+phy_init, data, phy,           ,  0x1000,
+factory,  app,  factory,       ,  1M,
